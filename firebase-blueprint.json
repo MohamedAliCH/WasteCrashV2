@@ -1,0 +1,197 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private player progression document storing Trophies, Eco-Coins, Boss collection, equipped 3-slot Eco-Deck, Friends list, and Daily Quests & Challenges.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the player" },
+        "displayName": { "type": "string", "description": "Player display name shown in battles and leaderboards" },
+        "friendCode": { "type": "string", "description": "6-character uppercase shareable friend code" },
+        "trophies": { "type": "integer", "description": "Current competitive Trophy count" },
+        "ecoCoins": { "type": "integer", "description": "Spendable Eco-Coins for Boss upgrades" },
+        "wins": { "type": "integer", "description": "Total 1v1 victories" },
+        "losses": { "type": "integer", "description": "Total 1v1 defeats" },
+        "equippedDeckIds": { "type": "array", "description": "Exactly 3 equipped Boss IDs in the active Eco-Deck" },
+        "bossLevels": { "type": "object", "description": "Map of bossId to current level (1..10)" },
+        "bossCopies": { "type": "object", "description": "Map of bossId to duplicate card copies" },
+        "friendUids": { "type": "array", "description": "List of added friend UIDs (max 50)" },
+        "dailyQuestSeedDate": { "type": "string", "description": "YYYY-MM-DD date string of active Daily Quests" },
+        "questProgress": { "type": "object", "description": "Map of questId to integer progress count" },
+        "questClaimed": { "type": "object", "description": "Map of questId to claimed boolean" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp when account was created (FieldValue.serverTimestamp())" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update (FieldValue.serverTimestamp())" }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "friendCode",
+        "trophies",
+        "ecoCoins",
+        "wins",
+        "losses",
+        "equippedDeckIds",
+        "bossLevels",
+        "bossCopies",
+        "friendUids",
+        "dailyQuestSeedDate",
+        "questProgress",
+        "questClaimed",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PublicProfile": {
+      "title": "PublicProfile",
+      "description": "Public non-PII player card used for Friend Code lookup, Friends list display, and VS banners.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID" },
+        "displayName": { "type": "string", "description": "Public player handle" },
+        "friendCode": { "type": "string", "description": "6-character friend code" },
+        "trophies": { "type": "integer", "description": "Public Trophy count" },
+        "arenaId": { "type": "integer", "description": "Current Arena ID (0..2)" },
+        "wins": { "type": "integer", "description": "Total wins" },
+        "equippedDeckIds": { "type": "array", "description": "Equipped 3 Boss IDs" },
+        "publicVisible": { "type": "boolean", "description": "Always true for query alignment" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "friendCode",
+        "trophies",
+        "arenaId",
+        "wins",
+        "equippedDeckIds",
+        "publicVisible",
+        "updatedAt"
+      ]
+    },
+    "MatchmakingTicket": {
+      "title": "MatchmakingTicket",
+      "description": "Real-time Trophy-based matchmaking queue entry.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Searching player UID" },
+        "displayName": { "type": "string", "description": "Player name" },
+        "trophies": { "type": "integer", "description": "Player Trophy count" },
+        "arenaId": { "type": "integer", "description": "Target Arena ID (0..2)" },
+        "deckBossIds": { "type": "array", "description": "3 equipped Boss IDs" },
+        "deckBossLevels": { "type": "array", "description": "3 equipped Boss levels" },
+        "status": { "type": "string", "enum": ["SEARCHING", "MATCHED"], "description": "Queue ticket state" },
+        "matchId": { "type": "string", "description": "Assigned liveMatch ID once matched" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "trophies",
+        "arenaId",
+        "deckBossIds",
+        "deckBossLevels",
+        "status",
+        "matchId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LiveMatch": {
+      "title": "LiveMatch",
+      "description": "Live 1v1 competitive race state supporting both players and real-time Spectator Mode.",
+      "type": "object",
+      "properties": {
+        "creatorUid": { "type": "string", "description": "UID of the player who initialized the match" },
+        "participantUids": { "type": "array", "description": "1 or 2 participant UIDs" },
+        "arenaId": { "type": "integer", "description": "Arena index 0..2" },
+        "placeId": { "type": "string", "description": "Locked Tunisian place ID" },
+        "bossId": { "type": "string", "description": "Shared Boss ID" },
+        "trophyBracket": { "type": "integer", "description": "Trophy tier 0..2 for Spectator filtering" },
+        "status": { "type": "string", "enum": ["ROULETTE", "ACTIVE", "FINISHED"], "description": "Live match lifecycle state" },
+        "durationSec": { "type": "integer", "description": "Match countdown duration in seconds" },
+        "spectatorCount": { "type": "integer", "description": "Active live spectator count" },
+        "botMatch": { "type": "boolean", "description": "True if paired with trophy-matched rival after timeout" },
+        "winnerUid": { "type": "string", "description": "Winning UID or empty while active" },
+        "player1": { "type": "object", "description": "Live snapshot of Player 1 board, HP, waves, deck, and ability charges" },
+        "player2": { "type": "object", "description": "Live snapshot of Player 2 board, HP, waves, deck, and ability charges" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": [
+        "creatorUid",
+        "participantUids",
+        "arenaId",
+        "placeId",
+        "bossId",
+        "trophyBracket",
+        "status",
+        "durationSec",
+        "spectatorCount",
+        "botMatch",
+        "winnerUid",
+        "player1",
+        "player2",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MatchReplay": {
+      "title": "MatchReplay",
+      "description": "Recorded battle replay with chronological frames of both players' 7x7 boards and Eco-Decks for Friends & Spectator playback.",
+      "type": "object",
+      "properties": {
+        "creatorUid": { "type": "string", "description": "UID of the player who recorded the replay" },
+        "participantUids": { "type": "array", "description": "Participant UIDs for friend replay filtering" },
+        "replayPublic": { "type": "boolean", "description": "Always true so signed-in friends and spectators can watch" },
+        "arenaId": { "type": "integer", "description": "Arena ID 0..2" },
+        "placeId": { "type": "string", "description": "Tunisian place ID" },
+        "bossId": { "type": "string", "description": "Shared Boss ID" },
+        "trophyBracket": { "type": "integer", "description": "Trophy bracket 0..2" },
+        "winnerUid": { "type": "string", "description": "Winning UID" },
+        "durationSec": { "type": "integer", "description": "Elapsed match duration in seconds" },
+        "player1Summary": { "type": "object", "description": "Player 1 metadata, Eco-Deck, Boss levels, and final damage" },
+        "player2Summary": { "type": "object", "description": "Player 2 metadata, Eco-Deck, Boss levels, and final damage" },
+        "frames": { "type": "array", "description": "Chronological replay snapshots of both boards, HP, waves, and ability events" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": [
+        "creatorUid",
+        "participantUids",
+        "replayPublic",
+        "arenaId",
+        "placeId",
+        "bossId",
+        "trophyBracket",
+        "winnerUid",
+        "durationSec",
+        "player1Summary",
+        "player2Summary",
+        "frames",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Owner-isolated player progression, inventory, Eco-Deck, friends, and quest progress."
+    },
+    "/publicProfiles/{userId}": {
+      "schema": { "$ref": "#/entities/PublicProfile" },
+      "description": "Public non-PII player showcase cards for Friend Code lookups and Friends list."
+    },
+    "/matchmakingQueue/{userId}": {
+      "schema": { "$ref": "#/entities/MatchmakingTicket" },
+      "description": "Live Trophy-based matchmaking tickets."
+    },
+    "/liveMatches/{matchId}": {
+      "schema": { "$ref": "#/entities/LiveMatch" },
+      "description": "Live 1v1 matches streamed to competitors and real-time spectators."
+    },
+    "/replays/{replayId}": {
+      "schema": { "$ref": "#/entities/MatchReplay" },
+      "description": "Immutable battle replays for friends and community viewing."
+    }
+  }
+}

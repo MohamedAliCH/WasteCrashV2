@@ -1,0 +1,453 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Security Primitives ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidStringList(arr, minLen, maxLen) {
+      return arr is list &&
+             arr.size() >= minLen &&
+             arr.size() <= maxLen &&
+             (arr.size() == 0 || arr[0] is string);
+    }
+
+    function isValidIntList(arr, minLen, maxLen) {
+      return arr is list &&
+             arr.size() >= minLen &&
+             arr.size() <= maxLen &&
+             (arr.size() == 0 || arr[0] is int);
+    }
+
+    // --- Entity Validation Helpers ---
+    function isValidUserProfile(data) {
+      return isValidString(data.userId, 1, 128) &&
+             isValidString(data.displayName, 1, 40) &&
+             isValidString(data.friendCode, 6, 8) &&
+             data.trophies is int && data.trophies >= 0 && data.trophies <= 100000 &&
+             data.ecoCoins is int && data.ecoCoins >= 0 && data.ecoCoins <= 10000000 &&
+             data.wins is int && data.wins >= 0 && data.wins <= 100000 &&
+             data.losses is int && data.losses >= 0 && data.losses <= 100000 &&
+             isValidStringList(data.equippedDeckIds, 1, 3) &&
+             data.bossLevels is map && data.bossLevels.size() <= 30 &&
+             data.bossCopies is map && data.bossCopies.size() <= 30 &&
+             isValidStringList(data.friendUids, 0, 50) &&
+             isValidString(data.dailyQuestSeedDate, 8, 12) &&
+             data.questProgress is map && data.questProgress.size() <= 30 &&
+             data.questClaimed is map && data.questClaimed.size() <= 30 &&
+             (!('avatarId' in data) || isValidString(data.avatarId, 1, 40)) &&
+             (!('purifiedPlaceIds' in data) || isValidStringList(data.purifiedPlaceIds, 0, 20)) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    // Without a backend the client still computes rewards, but a single write may only move the
+    // economy by what one match / quest / upgrade can legitimately produce.
+    function isPlausibleProgress(inc, ex) {
+      return inc.trophies - ex.trophies <= 30 &&
+             ex.trophies - inc.trophies <= 15 &&
+             (inc.wins == ex.wins || inc.wins == ex.wins + 1) &&
+             (inc.losses == ex.losses || inc.losses == ex.losses + 1) &&
+             inc.ecoCoins - ex.ecoCoins <= 1000;
+    }
+
+    // Public showcase numbers must mirror the owner's private profile.
+    function mirrorsPrivateProfile(data, userId) {
+      let priv = get(/databases/$(database)/documents/users/$(userId)).data;
+      return data.trophies == priv.trophies && data.wins == priv.wins && data.friendCode == priv.friendCode;
+    }
+
+    function isValidPublicProfile(data) {
+      return isValidString(data.userId, 1, 128) &&
+             isValidString(data.displayName, 1, 40) &&
+             isValidString(data.friendCode, 6, 8) &&
+             data.trophies is int && data.trophies >= 0 && data.trophies <= 100000 &&
+             data.arenaId is int && data.arenaId >= 0 && data.arenaId <= 2 &&
+             data.wins is int && data.wins >= 0 && data.wins <= 100000 &&
+             isValidStringList(data.equippedDeckIds, 1, 3) &&
+             data.publicVisible is bool && data.publicVisible == true &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidMatchmakingTicket(data) {
+      return isValidString(data.userId, 1, 128) &&
+             isValidString(data.displayName, 1, 40) &&
+             data.trophies is int && data.trophies >= 0 && data.trophies <= 100000 &&
+             data.arenaId is int && data.arenaId >= 0 && data.arenaId <= 2 &&
+             isValidStringList(data.deckBossIds, 1, 3) &&
+             isValidIntList(data.deckBossLevels, 1, 3) &&
+             (data.status == 'SEARCHING' || data.status == 'MATCHED') &&
+             isValidString(data.matchId, 0, 128) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidPlayerLiveState(p) {
+      return p is map &&
+             p.uid is string && p.uid.size() >= 1 && p.uid.size() <= 128 &&
+             p.name is string && p.name.size() >= 1 && p.name.size() <= 40 &&
+             p.trophies is int && p.trophies >= 0 && p.trophies <= 100000 &&
+             p.deckBossIds is list && p.deckBossIds.size() >= 1 && p.deckBossIds.size() <= 3 &&
+             p.deckBossLevels is list && p.deckBossLevels.size() >= 1 && p.deckBossLevels.size() <= 3 &&
+             p.waveIndex is int && p.waveIndex >= 0 && p.waveIndex <= 10 &&
+             p.bossHp is int && p.bossHp >= 0 && p.bossHp <= 100000 &&
+             p.bossMaxHp is int && p.bossMaxHp >= 1 && p.bossMaxHp <= 100000 &&
+             p.totalDamage is int && p.totalDamage >= 0 && p.totalDamage <= 1000000 &&
+             p.restorationPct is int && p.restorationPct >= 0 && p.restorationPct <= 100 &&
+             p.boardFlat is list && p.boardFlat.size() <= 49 &&
+             p.skillCharges is list && p.skillCharges.size() <= 3 &&
+             p.lastAbility is string && p.lastAbility.size() <= 80;
+    }
+
+    function isValidLiveMatch(data) {
+      return data.creatorUid is string && data.creatorUid.size() >= 1 && data.creatorUid.size() <= 128 &&
+             data.participantUids is list && data.participantUids.size() >= 1 && data.participantUids.size() <= 2 &&
+             data.arenaId is int && data.arenaId >= 0 && data.arenaId <= 2 &&
+             data.placeId is string && data.placeId.size() >= 1 && data.placeId.size() <= 64 &&
+             data.bossId is string && data.bossId.size() >= 1 && data.bossId.size() <= 64 &&
+             data.trophyBracket is int && data.trophyBracket >= 0 && data.trophyBracket <= 2 &&
+             (data.status == 'ROULETTE' || data.status == 'ACTIVE' || data.status == 'FINISHED') &&
+             data.durationSec is int && data.durationSec >= 30 && data.durationSec <= 300 &&
+             data.spectatorCount is int && data.spectatorCount >= 0 && data.spectatorCount <= 100000 &&
+             data.botMatch is bool &&
+             data.winnerUid is string && data.winnerUid.size() <= 128 &&
+             isValidPlayerLiveState(data.player1) &&
+             isValidPlayerLiveState(data.player2) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidReplaySummary(s) {
+      return s is map &&
+             isValidString(s.uid, 1, 128) &&
+             isValidString(s.name, 1, 40) &&
+             s.trophies is int && s.trophies >= 0 && s.trophies <= 100000 &&
+             isValidStringList(s.deckBossIds, 1, 3) &&
+             isValidIntList(s.deckBossLevels, 1, 3) &&
+             s.totalDamage is int && s.totalDamage >= 0 && s.totalDamage <= 1000000 &&
+             s.restorationPct is int && s.restorationPct >= 0 && s.restorationPct <= 100;
+    }
+
+    function isValidReplay(data) {
+      return isValidString(data.creatorUid, 1, 128) &&
+             isValidStringList(data.participantUids, 1, 2) &&
+             data.replayPublic is bool && data.replayPublic == true &&
+             data.arenaId is int && data.arenaId >= 0 && data.arenaId <= 2 &&
+             isValidString(data.placeId, 1, 64) &&
+             isValidString(data.bossId, 1, 64) &&
+             data.trophyBracket is int && data.trophyBracket >= 0 && data.trophyBracket <= 2 &&
+             isValidString(data.winnerUid, 1, 128) &&
+             data.durationSec is int && data.durationSec >= 1 && data.durationSec <= 300 &&
+             isValidReplaySummary(data.player1Summary) &&
+             isValidReplaySummary(data.player2Summary) &&
+             data.frames is list && data.frames.size() >= 1 && data.frames.size() <= 45 &&
+             data.frames[0] is map &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidRoomCode(code) {
+      return code is string && code.size() == 6 && code.matches('^[A-Z0-9]{6}$');
+    }
+
+    function isValidPrivateRoom(data) {
+      return isValidRoomCode(data.roomCode) &&
+             isValidString(data.hostUid, 1, 128) &&
+             isValidString(data.hostName, 1, 40) &&
+             data.hostTrophies is int && data.hostTrophies >= 0 && data.hostTrophies <= 100000 &&
+             isValidStringList(data.hostDeckBossIds, 1, 3) &&
+             isValidIntList(data.hostDeckBossLevels, 1, 3) &&
+             data.arenaId is int && data.arenaId >= 0 && data.arenaId <= 2 &&
+             isValidString(data.edgeServerUrl, 0, 200) &&
+             (data.status == 'WAITING' || data.status == 'MATCHED' || data.status == 'CANCELLED') &&
+             isValidString(data.guestUid, 0, 128) &&
+             isValidString(data.matchId, 0, 128) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    // --- Collection 1: Private User Profiles ---
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'displayName', 'friendCode', 'trophies', 'ecoCoins',
+                         'wins', 'losses', 'equippedDeckIds', 'bossLevels', 'bossCopies',
+                         'friendUids', 'dailyQuestSeedDate', 'questProgress', 'questClaimed',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'displayName', 'friendCode', 'trophies', 'ecoCoins',
+                         'wins', 'losses', 'equippedDeckIds', 'bossLevels', 'bossCopies',
+                         'friendUids', 'dailyQuestSeedDate', 'questProgress', 'questClaimed',
+                         'avatarId', 'purifiedPlaceIds', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().friendCode == existing().friendCode &&
+                       incoming().createdAt == existing().createdAt &&
+                       isPlausibleProgress(incoming(), existing()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'displayName', 'trophies', 'ecoCoins', 'wins', 'losses',
+                         'equippedDeckIds', 'bossLevels', 'bossCopies', 'friendUids',
+                         'dailyQuestSeedDate', 'questProgress', 'questClaimed', 'avatarId',
+                         'purifiedPlaceIds', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // --- Collection 2: Public Non-PII Showcase Profiles (Friends & Lookup) ---
+    match /publicProfiles/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSignedIn() && resource.data.publicVisible == true;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'displayName', 'friendCode', 'trophies',
+                         'arenaId', 'wins', 'equippedDeckIds', 'publicVisible', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'displayName', 'friendCode', 'trophies',
+                         'arenaId', 'wins', 'equippedDeckIds', 'publicVisible', 'updatedAt'
+                       ]) &&
+                       isValidPublicProfile(incoming()) &&
+                       mirrorsPrivateProfile(incoming(), userId);
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       isValidPublicProfile(incoming()) &&
+                       mirrorsPrivateProfile(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'displayName', 'friendCode', 'trophies', 'arenaId',
+                         'wins', 'equippedDeckIds', 'publicVisible', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // --- Collection 3: Matchmaking Queue ---
+    match /matchmakingQueue/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSignedIn() && resource.data.status == 'SEARCHING';
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'displayName', 'trophies', 'arenaId',
+                         'deckBossIds', 'deckBossLevels', 'status', 'matchId',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'displayName', 'trophies', 'arenaId',
+                         'deckBossIds', 'deckBossLevels', 'status', 'matchId',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidMatchmakingTicket(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidMatchmakingTicket(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt && (
+                         // Action 1: Ticket owner refreshes or updates their own ticket
+                         (request.auth.uid == userId &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'displayName', 'trophies', 'arenaId', 'deckBossIds',
+                            'deckBossLevels', 'status', 'matchId', 'updatedAt'
+                          ])) ||
+                         // Action 2: Matchmaking opponent claims a SEARCHING ticket into MATCHED.
+                         // Only valid inside the same transaction that creates a live match
+                         // containing both the claimer and the ticket owner.
+                         (request.auth.uid != userId &&
+                          existing().status == 'SEARCHING' &&
+                          incoming().status == 'MATCHED' &&
+                          isValidId(incoming().matchId) &&
+                          getAfter(/databases/$(database)/documents/liveMatches/$(incoming().matchId)).data.participantUids.hasAll([request.auth.uid, userId]) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'status', 'matchId', 'updatedAt'
+                          ]))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // --- Collection 4: Live 1v1 Matches & Spectator Stream ---
+    match /liveMatches/{matchId} {
+      allow get: if isSignedIn() && isValidId(matchId);
+      allow list: if isSignedIn() && resource.data.status == 'ACTIVE';
+
+      allow create: if isSignedIn() &&
+                       isValidId(matchId) &&
+                       incoming().creatorUid == request.auth.uid &&
+                       request.auth.uid in incoming().participantUids &&
+                       incoming().keys().hasAll([
+                         'creatorUid', 'participantUids', 'arenaId', 'placeId', 'bossId',
+                         'trophyBracket', 'status', 'durationSec', 'spectatorCount',
+                         'botMatch', 'winnerUid', 'player1', 'player2', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'creatorUid', 'participantUids', 'arenaId', 'placeId', 'bossId',
+                         'trophyBracket', 'status', 'durationSec', 'spectatorCount',
+                         'botMatch', 'winnerUid', 'player1', 'player2', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidLiveMatch(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(matchId) &&
+                       isValidLiveMatch(incoming()) &&
+                       incoming().creatorUid == existing().creatorUid &&
+                       incoming().participantUids == existing().participantUids &&
+                       incoming().arenaId == existing().arenaId &&
+                       incoming().placeId == existing().placeId &&
+                       incoming().bossId == existing().bossId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().player1.uid == existing().player1.uid &&
+                       incoming().player2.uid == existing().player2.uid && (
+                         // Action 1: each participant streams ONLY their own player state until FINISHED.
+                         // The winner, when set, must be one of the two participants.
+                         (request.auth.uid in existing().participantUids &&
+                          existing().status != 'FINISHED' &&
+                          (incoming().winnerUid == '' || incoming().winnerUid in existing().participantUids) && (
+                            (request.auth.uid == existing().player1.uid &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'winnerUid', 'player1', 'updatedAt'])) ||
+                            (request.auth.uid == existing().player2.uid &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'winnerUid', 'player2', 'updatedAt'])) ||
+                            // Bot matches: the creator also streams the AI rival's state.
+                            (existing().botMatch == true && request.auth.uid == existing().creatorUid &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'winnerUid', 'player1', 'player2', 'updatedAt']))
+                          )) ||
+                         // Action 2: Spectators join/leave: spectatorCount moves by exactly 1
+                         (existing().status != 'FINISHED' &&
+                          (incoming().spectatorCount == existing().spectatorCount + 1 ||
+                           incoming().spectatorCount == existing().spectatorCount - 1) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'spectatorCount'
+                          ]))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(matchId) && existing().creatorUid == request.auth.uid;
+    }
+
+    // --- Collection 5: Immutable Match Replays ---
+    match /replays/{replayId} {
+      allow get: if isSignedIn() && isValidId(replayId);
+      allow list: if isSignedIn() && resource.data.replayPublic == true;
+
+      allow create: if isSignedIn() &&
+                       isValidId(replayId) &&
+                       incoming().creatorUid == request.auth.uid &&
+                       request.auth.uid in incoming().participantUids &&
+                       incoming().keys().hasAll([
+                         'creatorUid', 'participantUids', 'replayPublic', 'arenaId',
+                         'placeId', 'bossId', 'trophyBracket', 'winnerUid', 'durationSec',
+                         'player1Summary', 'player2Summary', 'frames', 'createdAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'creatorUid', 'participantUids', 'replayPublic', 'arenaId',
+                         'placeId', 'bossId', 'trophyBracket', 'winnerUid', 'durationSec',
+                         'player1Summary', 'player2Summary', 'frames', 'createdAt'
+                       ]) &&
+                       isValidReplay(incoming());
+
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(replayId) && existing().creatorUid == request.auth.uid;
+    }
+
+    // --- Collection 6: Private 1v1 Room Code Lobbies ---
+    match /privateRooms/{roomCode} {
+      allow get: if isSignedIn() && isValidRoomCode(roomCode);
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidRoomCode(roomCode) &&
+                       incoming().roomCode == roomCode &&
+                       incoming().hostUid == request.auth.uid &&
+                       incoming().status == 'WAITING' &&
+                       incoming().guestUid == '' &&
+                       incoming().matchId == '' &&
+                       incoming().keys().hasAll([
+                         'roomCode', 'hostUid', 'hostName', 'hostTrophies',
+                         'hostDeckBossIds', 'hostDeckBossLevels', 'arenaId',
+                         'edgeServerUrl', 'status', 'guestUid', 'matchId',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'roomCode', 'hostUid', 'hostName', 'hostTrophies',
+                         'hostDeckBossIds', 'hostDeckBossLevels', 'arenaId',
+                         'edgeServerUrl', 'status', 'guestUid', 'matchId',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidPrivateRoom(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidRoomCode(roomCode) &&
+                       isValidPrivateRoom(incoming()) &&
+                       incoming().roomCode == existing().roomCode &&
+                       incoming().hostUid == existing().hostUid &&
+                       incoming().createdAt == existing().createdAt && (
+                         // Action 1: Host cancels their own waiting room
+                         (request.auth.uid == existing().hostUid &&
+                          existing().status == 'WAITING' &&
+                          incoming().status == 'CANCELLED' &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+                         // Action 2: Guest atomically claims WAITING room into MATCHED inside the same
+                         // transaction that creates liveMatches/{matchId} containing both participants
+                         (request.auth.uid != existing().hostUid &&
+                          existing().status == 'WAITING' &&
+                          incoming().status == 'MATCHED' &&
+                          incoming().guestUid == request.auth.uid &&
+                          isValidId(incoming().matchId) &&
+                          getAfter(/databases/$(database)/documents/liveMatches/$(incoming().matchId)).data.participantUids.hasAll([request.auth.uid, existing().hostUid]) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'status', 'guestUid', 'matchId', 'updatedAt'
+                          ]))
+                       );
+
+      allow delete: if isSignedIn() && isValidRoomCode(roomCode) && existing().hostUid == request.auth.uid;
+    }
+  }
+}
