@@ -428,15 +428,33 @@ private fun SettingsTab(
                 tag = "settings_5g_slice"
             )
             if (linkState.sliceUpsellAvailable && linkState.sliceStatus != SliceStatus.ACTIVE) {
+                var confirmBoost by remember { mutableStateOf(false) }
+                if (confirmBoost) {
+                    AlertDialog(
+                        onDismissRequest = { confirmBoost = false },
+                        title = { Text("Carrier upgrade") },
+                        text = { Text("This opens your mobile carrier's offer for a low-latency 5G boost. Your carrier may charge for it. Continue?") },
+                        confirmButton = {
+                            TextButton(onClick = { confirmBoost = false; onBoostCarrierSlice() }) { Text("Continue") }
+                        },
+                        dismissButton = { TextButton(onClick = { confirmBoost = false }) { Text("Cancel") } }
+                    )
+                }
                 Spacer(Modifier.height(6.dp))
+                Text(
+                    "Carrier offer: may cost money on your mobile plan.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextMutedOnDark
+                )
+                Spacer(Modifier.height(4.dp))
                 Button(
-                    onClick = onBoostCarrierSlice,
+                    onClick = { confirmBoost = true },
                     colors = ButtonDefaults.buttonColors(containerColor = LimePlayTop, contentColor = DeepNavyInk),
                     modifier = Modifier.fillMaxWidth().testTag("settings_boost_5g_slice")
                 ) {
                     Icon(Icons.Default.Bolt, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Activate Carrier 5G Latency Slice", fontWeight = FontWeight.ExtraBold)
+                    Text("Carrier 5G Latency Boost…", fontWeight = FontWeight.ExtraBold)
                 }
             }
             Spacer(Modifier.height(8.dp))

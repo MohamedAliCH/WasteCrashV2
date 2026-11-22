@@ -745,27 +745,34 @@ class GameStateManager(
                 localUid = config.profile.userId,
                 localName = config.profile.displayName,
                 sliceNetwork = sliceNet,
+                // OkHttp delivers these on its own threads: hop to the main thread before touching
+                // game state, so relay frames never race with local moves or end a match twice.
                 onStatusChanged = { connected, bound, statusText ->
-                    edgeConnected = connected
-                    edgeBoundToSlice = bound
-                    edgeStatusText = statusText
-                    publishTelemetrySnapshot(isLocalFallback = false)
+                    scope.launch(Dispatchers.Main) {
+                        edgeConnected = connected
+                        edgeBoundToSlice = bound
+                        edgeStatusText = statusText
+                        publishTelemetrySnapshot(isLocalFallback = false)
+                    }
                 },
                 onRttMeasured = { rttMs ->
-                    rttCalculator.recordRttSample(rttMs)
-                    publishTelemetrySnapshot(isLocalFallback = false)
+                    scope.launch(Dispatchers.Main) {
+                        rttCalculator.recordRttSample(rttMs)
+                        publishTelemetrySnapshot(isLocalFallback = false)
+                    }
                 },
                 onOpponentStateReceived = { remoteOpp ->
-                    applyRemoteOpponentUpdate(remoteOpp)
-                    if (remoteOpp.bossHp <= 0 && !_state.value.isFinished) {
-                        concludeSession(won = false)
+                    // The relay is unauthenticated: it may only refresh the rival's on-screen state,
+                    // and only for the real opponent. It never decides the result; that comes from
+                    // Firestore (liveMatches) or this device's own timer / boss kill.
+                    if (remoteOpp.uid == config.opponentUid) {
+                        scope.launch(Dispatchers.Main) {
+                            if (!_state.value.isFinished) applyRemoteOpponentUpdate(remoteOpp.copy(bossHp = remoteOpp.bossHp.coerceAtLeast(1)))
+                        }
                     }
                 },
-                onRemoteFinishReceived = { winnerUid ->
-                    if (!_state.value.isFinished) {
-                        val myUid = activeProfile?.userId.orEmpty()
-                        concludeSession(won = winnerUid == myUid, publish = false)
-                    }
+                onRemoteFinishReceived = { _ ->
+                    // Ignored on purpose: any relay client could claim a winner.
                 }
             )
         }
@@ -784,7 +791,8 @@ class GameStateManager(
                     } else {
                         publishTelemetrySnapshot(isLocalFallback = false)
                     }
-                    delay(2500L)
+                    // One billed Firestore read per probe: keep it infrequent.
+                    delay(RTT_PROBE_INTERVAL_MS)
                 }
             }
         }
@@ -1498,3 +1506,5 @@ class GameStateManager(
         soundPlayer.release()
     }
 }
+
+private const val RTT_PROBE_INTERVAL_MS = 8000L

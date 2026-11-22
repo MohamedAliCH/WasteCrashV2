@@ -79,7 +79,14 @@ class EdgeWebSocketClient(
 
         val request = Request.Builder().url(trimmed).build()
         socket = okClient.newWebSocket(request, object : WebSocketListener() {
+            // A newer connect() replaces `socket`; events from the old socket must not touch it.
+            private fun isCurrent(webSocket: WebSocket) = webSocket === socket
+
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (!isCurrent(webSocket)) {
+                    webSocket.close(1000, "Superseded")
+                    return
+                }
                 isConnected = true
                 onStatusChanged(
                     true,
@@ -97,6 +104,7 @@ class EdgeWebSocketClient(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (!isCurrent(webSocket)) return
                 try {
                     val obj = JSONObject(text)
                     val type = obj.optString("type")
@@ -147,18 +155,21 @@ class EdgeWebSocketClient(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                if (!isCurrent(webSocket)) return
                 isConnected = false
                 pingJob?.cancel()
                 onStatusChanged(false, false, "Cloud Fallback")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (!isCurrent(webSocket)) return
                 isConnected = false
                 pingJob?.cancel()
                 onStatusChanged(false, false, "Cloud Fallback")
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (!isCurrent(webSocket)) return
                 isConnected = false
                 pingJob?.cancel()
                 Log.w(TAG, "Edge WebSocket failure: ${t.message}")
@@ -205,11 +216,12 @@ class EdgeWebSocketClient(
         pingJob = null
         isConnected = false
         isBoundToSlice = false
+        val old = socket
+        socket = null // clear first: late callbacks from `old` are then ignored
         try {
-            socket?.close(1000, "Session ended")
+            old?.close(1000, "Session ended")
         } catch (_: Exception) {
         }
-        socket = null
         client?.dispatcher?.executorService?.shutdown()
         client = null
     }
@@ -217,7 +229,7 @@ class EdgeWebSocketClient(
     private fun startPingLoop(ws: WebSocket, matchId: String, localUid: String) {
         pingJob?.cancel()
         pingJob = scope.launch(Dispatchers.IO) {
-            while (isActive && isConnected) {
+            while (isActive && isConnected && ws === socket) {
                 val ping = JSONObject().apply {
                     put("type", "ping")
                     put("matchId", matchId)

@@ -252,7 +252,8 @@ class MatchmakingViewModel(
                                 profile = profile,
                                 matchId = updated.matchId,
                                 amIPlayer1 = true,
-                                edgeServerUrl = updated.edgeServerUrl.ifBlank { cleanEdge }
+                                // Host keeps its own relay choice
+                                edgeServerUrl = cleanEdge
                             )
                         }
                     }
@@ -307,7 +308,9 @@ class MatchmakingViewModel(
                 Match3Engine.decodeBoardFlat(match.player1.boardFlat)
             } else Match3Engine.createInitialBoard()
 
-            val effectiveEdge = joined.edgeServerUrl.ifBlank { SettingsStore.current.edgeServerUrl }
+            // Never auto-connect to a relay URL picked by the room host: only use the guest's own
+            // configured relay (or Firestore if none), so the host can't route the guest elsewhere.
+            val effectiveEdge = SettingsStore.current.edgeServerUrl
             spinPlaceRouletteAndLaunchSession(
                 GameSessionConfig(
                     matchId = joined.matchId,
