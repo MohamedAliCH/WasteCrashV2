@@ -52,8 +52,9 @@ android {
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
-      // Enable online Firebase 1v1 multiplayer and 5G SA telemetry in debug builds as well.
-      buildConfigField("boolean", "LOCAL_TEST_MODE", "false")
+      // Debug builds run fully offline as a local guest: no sign-in, AI rivals, local saves.
+      // Set to "false" to test Firebase online play, private rooms and the edge relay.
+      buildConfigField("boolean", "LOCAL_TEST_MODE", "true")
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
       signingConfig = signingConfigs.getByName("debugConfig")
